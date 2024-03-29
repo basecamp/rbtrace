@@ -225,6 +225,9 @@ EOS
         :default => "AUTO",
         :short => "-h"
 
+      opt :shapesdump,
+        "generate a shapes dump for the process in FILENAME",
+        :default => "AUTO"
     end
 
     opts = Optimist.with_standard_exception_handling(parser) do
@@ -241,7 +244,7 @@ EOS
     end
 
     unless %w[ fork eval interactive backtrace backtraces slow slowcpu firehose methods config gc memory heapdump].find{ |n| opts[:"#{n}_given"] }
-      $stderr.puts "Error: --slow, --slowcpu, --gc, --firehose, --methods, --interactive, --backtraces, --backtrace, --memory, --heapdump or --config required."
+      $stderr.puts "Error: --slow, --slowcpu, --gc, --firehose, --methods, --interactive, --backtraces, --backtrace, --memory, --heapdump, --shapesdump or --config required."
       $stderr.puts "Try --help for help."
       exit(-1)
     end
@@ -499,8 +502,46 @@ EOS
           temp.unlink
         end
 
-        tracer.eval("file = File.open('#{filename}', 'w'); ObjectSpace.dump_all(output: file); file.close")
+        tracer.eval(<<-RUBY)
+          Thread.new do
+            Thread.current.name = '__RBTrace__'
+            pid = ::Process.fork do
+              file = File.open('#{filename}.tmp', 'w')
+              ObjectSpace.dump_all(output: file)
+              file.close
+              File.rename('#{filename}.tmp', '#{filename}')
+              exit!(0)
+            end
+            Process.waitpid(pid)
+          end
+        RUBY
         puts "Heapdump being written to #{filename}"
+
+      elsif opts[:shapesdump_given]
+        filename = opts[:shapesdump]
+
+        if filename == "AUTO"
+          require 'tempfile'
+          temp = Tempfile.new("dump")
+          filename = temp.path
+          temp.close
+          temp.unlink
+        end
+
+        tracer.eval(<<-RUBY)
+          Thread.new do
+            Thread.current.name = '__RBTrace__'
+            pid = ::Process.fork do
+              file = File.open('#{filename}.tmp', 'w')
+              ObjectSpace.dump_shapes(output: file)
+              file.close
+              File.rename('#{filename}.tmp', '#{filename}')
+              exit!(0)
+            end
+            Process.waitpid(pid)
+          end
+        RUBY
+        puts "Shapes dump being written to #{filename}"
 
       elsif opts[:eval_given]
         if res = tracer.eval(code = opts[:eval])

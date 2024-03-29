@@ -81,7 +81,7 @@ timeofday_usec()
 #define MAX_TRACERS 100 // max method tracers
 #define MAX_EXPRS 10    // max expressions per tracer
 #ifndef BUF_SIZE        // msgq buffer size
-#define BUF_SIZE 120
+#define BUF_SIZE 1024
 #endif
 
 typedef struct {
@@ -878,9 +878,7 @@ eval_inspect(VALUE rb_code) {
 }
 
 static VALUE
-rescue_inspect(VALUE arg) {
-  VALUE exception = rb_errinfo(); /* get last exception */
-  rb_set_errinfo(Qnil);
+rescue_inspect(VALUE arg, VALUE exception) {
   return rb_funcall(exception, rb_intern("inspect"), 0);
 }
 
@@ -893,7 +891,6 @@ rbtrace__process_event(msgpack_object cmd)
   static int last_tracer_id = -1; // hax
   char query[BUF_SIZE];
 
-  char code[BUF_SIZE+150];
   VALUE val = Qnil;
 
   msgpack_object_array ary;
@@ -1140,17 +1137,26 @@ send_write(VALUE klass, VALUE val) {
   return Qnil;
 }
 
+static const rb_data_type_t rbtrace_type = {
+    "RBTrace",
+    {
+        rbtrace_gc_mark,
+    }
+};
+
 void
 Init_rbtrace()
 {
   rbtrace_module = rb_define_module("RBTrace");
   VALUE output = rb_define_module_under(rbtrace_module, "OUT");
 
+  rb_const_set(rbtrace_module, rb_intern("BUF_SIZE"), INT2NUM(BUF_SIZE));
+
   rb_define_singleton_method(output, "write", send_write, 1);
 
   // hook into the gc
-  gc_hook = Data_Wrap_Struct(rb_cObject, rbtrace_gc_mark, NULL, NULL);
   rb_global_variable(&gc_hook);
+  gc_hook = TypedData_Wrap_Struct(rb_cObject, &rbtrace_type, NULL);
 
   // catch signal telling us to read from the msgq
 #if defined(HAVE_RB_POSTPONED_JOB_REGISTER_ONE)
